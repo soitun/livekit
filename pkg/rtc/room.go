@@ -18,6 +18,7 @@ import (
 	"context"
 	"fmt"
 	"math"
+	"net"
 	"slices"
 	"sort"
 	"strings"
@@ -54,6 +55,8 @@ const (
 	dataForwardLoadBalanceThreshold = 20
 
 	simulateDisconnectSignalTimeout = 5 * time.Second
+
+	minIPTruncateLen = 8
 )
 
 var (
@@ -1816,8 +1819,8 @@ func connectionDetailsFields(infos []*types.ICEConnectionInfo) []interface{} {
 		candidates := make([]string, 0, len(info.Remote)+len(info.Local))
 		for _, c := range info.Local {
 			cStr := "[local]"
-			if c.Selected {
-				cStr += "[selected]"
+			if c.SelectedOrder != 0 {
+				cStr += fmt.Sprintf("[selected:%d]", c.SelectedOrder)
 			} else if c.Filtered {
 				cStr += "[filtered]"
 			}
@@ -1829,15 +1832,36 @@ func connectionDetailsFields(infos []*types.ICEConnectionInfo) []interface{} {
 		}
 		for _, c := range info.Remote {
 			cStr := "[remote]"
-			if c.Selected {
-				cStr += "[selected]"
+			if c.SelectedOrder != 0 {
+				cStr += fmt.Sprintf("[selected:%d]", c.SelectedOrder)
 			} else if c.Filtered {
 				cStr += "[filtered]"
 			}
 			if c.Trickle {
 				cStr += "[trickle]"
 			}
-			cStr += " " + c.Remote.String()
+			remoteAddress := c.Remote.Address()
+			ipAddr := net.ParseIP(remoteAddress)
+			isPrivate := false
+			if ipAddr != nil {
+				isPrivate = ipAddr.IsPrivate()
+			}
+			if !isPrivate && len(remoteAddress) > minIPTruncateLen {
+				remoteAddress = remoteAddress[:len(remoteAddress)-3] + "..."
+			}
+			cStr += " " + fmt.Sprintf("%s %s %s:%d", c.Remote.NetworkType(), c.Remote.Type(), remoteAddress, c.Remote.Port())
+			if relatedAddress := c.Remote.RelatedAddress(); relatedAddress != nil {
+				ipAddr = net.ParseIP(relatedAddress.Address)
+				if ipAddr != nil {
+					isPrivate = ipAddr.IsPrivate()
+				}
+
+				relatedAddressAddress := relatedAddress.Address
+				if !isPrivate && len(relatedAddressAddress) > minIPTruncateLen {
+					relatedAddressAddress = relatedAddressAddress[:len(relatedAddressAddress)-3] + "..."
+				}
+				cStr += " " + fmt.Sprintf(" related %s:%d", relatedAddressAddress, relatedAddress.Port)
+			}
 			candidates = append(candidates, cStr)
 		}
 		if len(candidates) > 0 {
